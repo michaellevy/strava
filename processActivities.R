@@ -155,7 +155,6 @@ ggplot(prs, aes(x = distance, y = speed)) +
 # Cameron formula from http://www.runningforfitness.org/faq/rp
 ab = function(dist) 13.49681 - 0.048865 * dist + 2.438936 / (dist * 0.7905)
 timeHat = function(oTime, oDist, nDist) (oTime / oDist) * (ab(oDist) / ab(nDist)) * nDist
-timeHat(1177, metersToMiles(5e3), metersToMiles(10e3))
 
 # Only predict from distances run more than once:
 predFrom = names(table(races$raceType)[table(races$raceType) > 1])
@@ -163,21 +162,31 @@ predFrom = names(table(races$raceType)[table(races$raceType) > 1])
 predTo = predFrom = c("5k", "10k", "half marathon", "marathon")
 preds = 
   lapply(which(prs$raceType %in% predTo), function(j) 
-    sapply(which(prs$raceType %in% predFrom), function(i) 
-      timeHat(prs$time[i], metersToMiles(prs$distance)[i], metersToMiles(prs$distance[j]))
-    )) %>%
+    lapply(which(prs$raceType %in% predFrom), function(i) 
+      c(cameron = timeHat(prs$time[i], metersToMiles(prs$distance)[i], metersToMiles(prs$distance[j])),
+        riegel = prs$time[i] * (metersToMiles(prs$distance[j]) / metersToMiles(prs$distance)[i]) ^ 1.06)
+    ) %>%
+      unlist() %>%
+      structure(names = unlist(lapply(predTo, function(x) paste0(c("cam-", "rie-"), x))))
+  ) %>%
   do.call(rbind, .) %>%
   as.data.frame() %>%
-  structure(names = paste0("predFrom:", predFrom)) %>%
+  # structure(names = paste0("predFrom:", predFrom)) %>%
   cbind(., raceType = predTo) %>%
   left_join(prs, ., by = "raceType")
 
 filter(preds, raceType %in% predTo) %>%
-  tidyr::gather(source, timeHat, grep("predFrom", names(preds))) %>% 
+  tidyr::gather(source, timeHat, grep("-", names(preds))) %>% 
   mutate(source = factor(source, source),
-         paceHat = speedToPace(distance / timeHat)) %>%
+         paceHat = speedToPace(distance / timeHat),
+         predMeth = sapply(strsplit(as.character(source), "-"), '[[', 1),
+         predSource = sapply(strsplit(as.character(source), "-"), '[[', 2),
+         predSource = factor(predSource, predSource)
+         ) %>% 
   ggplot(aes(x = distance, y = paceHat)) + 
-  geom_line(aes(color = source)) + 
+  geom_line(aes(color = predSource, linetype = predMeth)) + 
   geom_point(aes(y = pace)) +
   scale_x_continuous(name = "", breaks = prs$distance, labels = prs$raceType) +
-  theme(axis.text.x  = element_text(angle = -45, vjust = 1, hjust = 0))
+  theme(axis.text.x  = element_text(angle = -45, vjust = 1, hjust = 0)) +
+  geom_text(aes(label = round(timeHat / 60, 1), color = predSource), size = 3, hjust = "outward") +
+  facet_wrap(~ predMeth)
